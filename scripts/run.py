@@ -157,6 +157,18 @@ def write_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
             writer.writerow(row)
 
 
+def monotone_var_budget(arity: int, depth: int) -> int:
+    if depth <= 0:
+        return max(2, arity)
+    try:
+        leaves_per_tree = arity ** depth
+    except OverflowError:
+        leaves_per_tree = int(math.pow(arity, depth))
+    # total unique leaves across both trees
+    total_leaves = 2 * leaves_per_tree
+    return max(total_leaves, arity)
+
+
 class ControlledExperiment:
     def __init__(self, data: Dict[str, Any]):
         self.data = data
@@ -181,7 +193,7 @@ CONTROLLED_EXPERIMENTS: List[ControlledExperiment] = [
         {
             "id": "C1_altfull",
             "shape": "altfull",
-            "budgets": list(range(1, 17)),
+            "budgets": list(range(1, 15)),
             "vars": 4096,
             "samples": 32,
             "min_arity": 2,
@@ -202,7 +214,7 @@ CONTROLLED_EXPERIMENTS: List[ControlledExperiment] = [
         {
             "id": "E_bestcase",
             "shape": "bestcase",
-            "budgets": list(range(1, 17)),
+            "budgets": list(range(1, 15)),
             "vars": 4096,
             "samples": 16,
             "min_arity": 2,
@@ -221,7 +233,7 @@ CONTROLLED_EXPERIMENTS: List[ControlledExperiment] = [
         {
             "id": "E_worstcase",
             "shape": "worstcase",
-            "budgets": list(range(1, 17)),
+            "budgets": list(range(1, 15)),
             "vars": 128,
             "samples": 16,
             "min_arity": 2,
@@ -330,7 +342,7 @@ CONTROLLED_EXPERIMENTS: List[ControlledExperiment] = [
         {
             "id": "C5_spines",
             "shape": "leftspine",
-            "budgets": [20, 40, 60, 80],
+            "budgets": [20, 40, 60],
             "vars": 1024,
             "samples": 32,
             "min_arity": 2,
@@ -347,7 +359,7 @@ CONTROLLED_EXPERIMENTS: List[ControlledExperiment] = [
         {
             "id": "C5_spines_r",
             "shape": "rightspine",
-            "budgets": [20, 40, 60, 80],
+            "budgets": [20, 40, 60],
             "vars": 1024,
             "samples": 32,
             "min_arity": 2,
@@ -426,6 +438,46 @@ CONTROLLED_EXPERIMENTS: List[ControlledExperiment] = [
             "v_root": "join",
             "ensure_unique_leaves": False,
             "seed_base": 4295067296,
+        }
+    ),
+    ControlledExperiment(
+        {
+            "id": "MONO_k2",
+            "shape": "monotone",
+            "budgets": list(range(2, 13)),
+            "vars": monotone_var_budget(2, 12),
+            "samples": 1,
+            "min_arity": 2,
+            "max_arity": 2,
+            "p_join": 0.0,
+            "p_alt": 0.0,
+            "u_root": "auto",
+            "v_root": "auto",
+            "ensure_unique_leaves": True,
+            "unique_scope": "sequent",
+            "sample_policy": "base",
+            "allow_global_override": False,
+            "seed_base": 5000000000,
+        }
+    ),
+    ControlledExperiment(
+        {
+            "id": "MONO_k3",
+            "shape": "monotone",
+            "budgets": list(range(2, 11)),
+            "vars": monotone_var_budget(3, 10),
+            "samples": 1,
+            "min_arity": 3,
+            "max_arity": 3,
+            "p_join": 0.0,
+            "p_alt": 0.0,
+            "u_root": "auto",
+            "v_root": "auto",
+            "ensure_unique_leaves": True,
+            "unique_scope": "sequent",
+            "sample_policy": "base",
+            "allow_global_override": False,
+            "seed_base": 5000100000,
         }
     ),
 ]
@@ -646,34 +698,69 @@ def controlled_suite(
                     seed = int(base_seed) + idx * 10000 + int(budget)
                 used_seeds.append(f"{budget}:{seed}")
                 vars_count = int(exp.data["vars"])
-                if exp.data.get("ensure_unique_leaves"):
+                if exp.data["shape"] == "monotone":
+                    required_vars = monotone_var_budget(int(exp.data["min_arity"]), int(budget))
+                    vars_count = max(vars_count, required_vars)
+                elif exp.data.get("ensure_unique_leaves"):
                     vars_count = max(vars_count, int(2 ** budget))
                 json_path = exp_dir / f"pairs_B{budget}.jsonl"
                 rel_json = os.path.relpath(json_path, project_root)
                 sample_plan.append(f"{budget}:{samples_for_budget}")
-                gen_args = [
-                    "rand",
-                    "--seed",
-                    str(seed),
-                    "--vars",
-                    str(vars_count),
-                    "--budget",
-                    str(budget),
-                    "--samples",
-                    str(samples_for_budget),
-                    "--shape",
-                    exp.data["shape"],
-                    "--min_arity",
-                    str(exp.data["min_arity"]),
-                    "--max_arity",
-                    str(exp.data["max_arity"]),
-                    "--p_join",
-                    str(exp.data["p_join"]),
-                    "--p_alt",
-                    str(exp.data["p_alt"]),
-                    "--out",
-                    rel_json,
-                ]
+                if exp.data["shape"] == "monotone":
+                    gen_args = [
+                        "rand",
+                        "--seed",
+                        str(seed),
+                        "--vars",
+                        str(vars_count),
+                        "--budget",
+                        str(budget),
+                        "--samples",
+                        str(samples_for_budget),
+                        "--shape",
+                        "monotone",
+                        "--mono_depth",
+                        str(budget),
+                        "--mono_arity",
+                        str(exp.data["min_arity"]),
+                        "--min_arity",
+                        str(exp.data["min_arity"]),
+                        "--max_arity",
+                        str(exp.data["max_arity"]),
+                        "--p_join",
+                        str(exp.data["p_join"]),
+                        "--p_alt",
+                        str(exp.data["p_alt"]),
+                        "--unique_leaves",
+                        "--unique_scope",
+                        str(exp.data.get("unique_scope", "sequent")),
+                        "--out",
+                        rel_json,
+                    ]
+                else:
+                    gen_args = [
+                        "rand",
+                        "--seed",
+                        str(seed),
+                        "--vars",
+                        str(vars_count),
+                        "--budget",
+                        str(budget),
+                        "--samples",
+                        str(samples_for_budget),
+                        "--shape",
+                        exp.data["shape"],
+                        "--min_arity",
+                        str(exp.data["min_arity"]),
+                        "--max_arity",
+                        str(exp.data["max_arity"]),
+                        "--p_join",
+                        str(exp.data["p_join"]),
+                        "--p_alt",
+                        str(exp.data["p_alt"]),
+                        "--out",
+                        rel_json,
+                    ]
                 if exp.data["shape"] == "alternating" and (
                     exp.data.get("u_root") != "auto" or exp.data.get("v_root") != "auto"
                 ):
